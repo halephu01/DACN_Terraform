@@ -1,0 +1,68 @@
+name: "Destroy resources"
+on: 
+    workflow_dispatch:
+jobs:
+    terraform:
+        name: "Destroy all resources from S3 Bucket"
+        env:
+            AWS_ACCESS_KEY: ${{secrets.AWS_ACCESS_KEY}}
+            AWS_SECRET_KEY: ${{secrets.AWS_SECRET_KEY}}
+            SSH_SECRET_KEY: ${{secrets.SSH_SECRET_KEY}}
+            AWS_REGION: ap-southeast-2
+            CLUSTER_NAME: my-cluster
+        
+        runs-on: ubuntu-latest
+        steps:
+            - name: "checkout"
+              uses: "actions/checkout@v3"
+
+            - name: Setup Terraform with specified version on the runner
+              uses: hashicorp/setup-terraform@v2
+              with:
+                terraform_version: 1.8.5
+                terraform_wrapper: false
+
+            - name: Configure AWS credentials
+              uses: aws-actions/configure-aws-credentials@v2
+              with:
+                aws-access-key-id: ${{ env.AWS_ACCESS_KEY }}
+                aws-secret-access-key: ${{ env.AWS_SECRET_KEY }}
+                aws-region: ap-southeast-2
+            
+            - name: Install kubectl
+              run: |
+                curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
+                chmod +x ./kubectl
+                sudo mv ./kubectl /usr/local/bin/kubectl
+        
+            - name: Update kubeconfig
+              run: |
+                aws eks --region ${{env.AWS_REGION}} update-kubeconfig --name ${{env.CLUSTER_NAME}}
+                kubectl config view
+
+            - name: Delete frontend from EKS
+              run: kubectl delete -f k8s/ingress.yml
+
+            - name: Terraform init
+              run: terraform init
+
+            - name: SSH Private key
+              run: echo '${{ env.SSH_SECRET_KEY }}' >> "ed25519"
+
+            - name: Downlaod terraform.tfstate from S3
+              run: aws s3 cp s3://bucket-dacn/state/terraform.tfstate .
+
+            - name: Delete frontend from EKS
+              run: kubectl delete -f k8s/frontend-deployment.yml
+              
+            - name: Delete backend from EKS
+              run: kubectl delete -f k8s/backend-deployment.yml
+
+            - name: Delete frontend from EKS
+              run: kubectl delete -f k8s/deploy.yml
+            
+            - name: Terraform destroy
+              run: terraform destroy -auto-approve
+
+            
+
